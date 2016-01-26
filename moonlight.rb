@@ -50,7 +50,6 @@ class Moonlight
 
   def self.request url, headers
     return if url.nil? || url.empty?
-    puts url
     HTTParty.get(url, follow_redirects: true, headers: headers)
   end
 
