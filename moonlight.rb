@@ -49,6 +49,7 @@ class Moonlight
   }
 
   def self.request url, headers
+  	printf "."
     return if url.nil? || url.empty?
     HTTParty.get(url, follow_redirects: true, headers: headers)
   end

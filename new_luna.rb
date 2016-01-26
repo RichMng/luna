@@ -14,7 +14,7 @@ NUM_FROM = gets
 puts "请输入结束页数..."
 NUM_TO = gets
 puts "请输入关键字..."
-KEY = gets
+KEY = gets.encode!("utf-8", :undef => :replace, :replace => "?", :invalid => :replace)
 
 
 ActiveRecord::Base.establish_connection adapter: 'sqlite3', database: 'luna.db'
@@ -64,13 +64,11 @@ class Store < ActiveRecord::Base
 
   def self.parse
     (NUM_FROM.to_i..NUM_TO.to_i).each do |num|
-      printf "."
       page_url = "https://shopsearch.taobao.com/search?app=shopsearch&q=#{ URI::encode(KEY) }&js=1&initiative_id=staobaoz_20160121&ie=utf8&s=#{ num * 20 }"
       response = Moonlight.request(page_url, Moonlight::SEARCH_HEADER)
       js_str = Nokogiri::HTML(response).xpath("//script")[5].to_s
       hash_str = JSON.parse((match = js_str.match(/(g_page_config\s*=\s*)(.*?});/)) && match[2])
       hash_str["mods"]["shoplist"]["data"]["shopItems"].each do |item|
-        printf "."
         link = "https:" + item['shopUrl'] if item['shopUrl'].present?
         level = item['shopIcon']['iconClass'].split("-").last if item['shopIcon']['iconClass']
         auctions_list = item['auctionsInshop'].map {|auction| "https:" + auction["url"]} if item['auctionsInshop']
@@ -90,7 +88,6 @@ class Store < ActiveRecord::Base
 
 
   def find_weixin
-    printf "."
     return unless link
     response = Moonlight.request(link, Moonlight::SHOP_HEADER).to_s.encode!("utf-8", :undef => :replace, :replace => "?", :invalid => :replace)
     match = match_weixin Nokogiri::HTML(response).xpath("//text()").to_s
@@ -119,6 +116,7 @@ class Store < ActiveRecord::Base
     string.match(/(?i)((v|w|wei|微|薇|wechat)(xin|x|信))([:：\s]|[\u4e00-\u9fa5]){1,3}(([a-zA-Z]|[\w\-]){6,20})/)
   end
 end
+
 begin
   Store.destroy_all
   Store.parse()
@@ -128,7 +126,7 @@ rescue Exception => e
   puts "发生错误！联系小白"
   File.open("error.log", "a") do |f|
     f << "[#{Time.now}] "
-    f << e
+    e.backtrace.split(",").each {|error| f << error}
     f << "\n\n"
   end
 end
