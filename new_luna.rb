@@ -7,7 +7,8 @@ require 'active_record'
 require 'axlsx'
 require 'logger'
 require 'openssl'
-OpenSSL::SSL::VERIFY_PEER = OpenSSL::SSL::VERIFY_NONE
+
+# OpenSSL::SSL::VERIFY_PEER = OpenSSL::SSL::VERIFY_NONE
 
 puts "请输入开始页数..."
 NUM_FROM = gets
@@ -28,7 +29,7 @@ ActiveRecord::Base.establish_connection adapter: 'sqlite3', database: 'luna.db'
 #     t.boolean  :is_tmall
 #     t.string  :nick
 #     t.text    :weixin_text
-#     t.text    :auctions_in_shop
+#     t.text    :first_auction
 #     t.string  :provcity
 #   end
 
@@ -51,7 +52,6 @@ ActiveRecord::Base.establish_connection adapter: 'sqlite3', database: 'luna.db'
 
 class Store < ActiveRecord::Base
   has_many :items
-  serialize :auctions_in_shop, Array
   LEVEL = {
     'icon-supple-level-zuan'=> "钻",
     'icon-supple-level-xin'=> "心",
@@ -67,53 +67,39 @@ class Store < ActiveRecord::Base
       page_url = "https://shopsearch.taobao.com/search?app=shopsearch&q=#{ URI::encode(KEY) }&js=1&initiative_id=staobaoz_20160121&ie=utf8&s=#{ num * 20 }"
       response = Moonlight.request(page_url, Moonlight::SEARCH_HEADER)
       js_str = Nokogiri::HTML(response).xpath("//script")[5].to_s
-      hash_str = JSON.parse((match = js_str.match(/(g_page_config\s*=\s*)(.*?});/)) && match[2])
+      hash_str = JSON.parse((js_str.match(/(g_page_config\s*=\s*)(.*?});/)).try(:[],2))
       hash_str["mods"]["shoplist"]["data"]["shopItems"].each do |item|
-        link = "https:" + item['shopUrl'] if item['shopUrl'].present?
-        level = item['shopIcon']['iconClass'].split("-").last if item['shopIcon']['iconClass']
-        auctions_list = item['auctionsInshop'].map {|auction| "https:" + auction["url"]} if item['auctionsInshop']
         Store.create!(
-          level: level,
+          level: item['shopIcon']['iconClass'].to_s.split("-").last,
           user_id: item["uid"],
           is_tmall: item['isTmall'],
           nick: item['nick'],
-          link: link,
+          link: item['shopUrl'].present? && "https:" + item['shopUrl'],
           provcity: item['provcity'],
-          auctions_in_shop: auctions_list
+          first_auction: item['auctionsInshop'].try(:first).try(:[], 'url')
         )
       end
       break if NUM_TO.to_i >= hash_str["mods"]["pager"]["data"]["totalPage"].to_i
     end
   end
 
-
   def find_weixin
     return unless link
-    response = Moonlight.request(link, Moonlight::SHOP_HEADER).to_s.encode!("utf-8", :undef => :replace, :replace => "?", :invalid => :replace)
-    match = match_weixin Nokogiri::HTML(response).xpath("//text()").to_s
-    if match
-      self.weixin_text = match[5]
-      puts match
-    end
-
-    if !match && auctions_in_shop.size > 0
-      response = Moonlight.request(auctions_in_shop.first, Moonlight::SHOP_HEADER).to_s
-      desc_url = (match = response.match(/descUrl\s*:\s*"(\/\/)(.*?)(["]\s*[,])/)) && match[2]
+    response = Moonlight.request(link, Moonlight::SHOP_HEADER).to_s.encode!("utf-8", undef: :replace, :replace => "?", :invalid => :replace)
+    self.weixin_text = match_weixin(Nokogiri::HTML(response).xpath("//text()").to_s)
+    if !self.weixin_text && first_auction
+      response = Moonlight.request("https:" + first_auction, Moonlight::SHOP_HEADER).to_s
+      desc_url = (match = response.match(/descUrl\s*:\s*"(\/\/)(.*?)(["]\s*[,])/)).try(:[], 2)
       return unless desc_url
       response = Moonlight.request("http://#{desc_url}", Moonlight::JS_HEADER).to_s.encode!("utf-8", :undef => :replace, :replace => "?", :invalid => :replace)
-      match = response.match(/^var\s*desc\s*=\s*'(.*)/)
-      response = Nokogiri::HTML(match && match[1])
-      match = match_weixin response.xpath("//text()").to_s
-      if match
-        self.weixin_text = match[5]
-        puts match
-      end
+      response = Nokogiri::HTML(response.match(/^var\s*desc\s*=\s*'(.*)/).try(:[], 1))
+      self.weixin_text = match_weixin response.xpath("//text()").to_s
     end
     self.save!
   end
 
   def match_weixin string
-    string.match(/(?i)((v|w|wei|微|薇|wechat)(xin|x|信))([:：\s]|[\u4e00-\u9fa5]){1,3}(([a-zA-Z]|[\w\-]){6,20})/)
+    string.match(/(?i)((v|w|wei|微|薇|wechat)(xin|x|信))([:：\s]|[\u4e00-\u9fa5]){1,3}(([a-zA-Z]|[\w\-]){6,20})/).try(:[], 5)
   end
 end
 
@@ -130,9 +116,3 @@ rescue Exception => e
     f << "\n\n"
   end
 end
-
-
-
-
-
-
